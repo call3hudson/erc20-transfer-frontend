@@ -1,4 +1,1 @@
-import { Hasher } from "./Hasher";
-import { RPS } from "./RPS";
-
-export { Hasher, RPS };
+export { ERC20 as ERC20 } from "./ERC20";

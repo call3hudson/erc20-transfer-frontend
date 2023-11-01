@@ -30,9 +30,15 @@ export default function ButtonWithLoader({
       )}
       onClick={onClick}
       name={name}
-      disabled={disabled ?? false}
+      disabled={disabled == true || loading == true ? true : false}
     >
-      {loading ? <Spinner /> : title}
+      {loading ? (
+        <>
+          <Spinner />
+        </>
+      ) : (
+        title
+      )}
     </button>
   );
 }
