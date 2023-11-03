@@ -71,8 +71,8 @@ export default function Start() {
   });
   const {
     loading,
+    speedUp,
     estimatedGas,
-    nonce,
     estimatedTime,
     status,
     statusCode,
@@ -119,8 +119,7 @@ export default function Start() {
         return;
       case "setgas":
         increaseGasPriorityFee(
-          BigInt(state.gasFee.amount - state.gasFee.baseFee),
-          nonce
+          BigInt(state.gasFee.amount - state.gasFee.baseFee)
         );
         return;
     }
@@ -535,6 +534,7 @@ export default function Start() {
                   className="w-full m-auto text-white bg-gradient-to-r from-purple-400 via-purple-500 to-purple-600 focus:ring-4 focus:outline-none focus:ring-purple-300 dark:focus:ring-purple-800 shadow-lg shadow-cyan-500/50 dark:shadow-lg dark:shadow-purple-800/80 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
                   name="setgas"
                   disabled={readOnly}
+                  loading={speedUp}
                 />
               </div>
             ) : (

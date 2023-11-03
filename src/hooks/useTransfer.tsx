@@ -54,22 +54,33 @@ const useTransfer = ({
   const [estimatedGas, setEstimatedGas] = useState(0);
   const [estimatedTime, setEstimatedTime] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [speedUp, setSpeedUp] = useState(false);
   const [status, setStatus] = useState("-");
   const [statusCode, setStatusCode] = useState(0);
 
-  const increaseGasPriorityFee = (fee: bigint, nonce: number | undefined) => {
-    if (nonce === undefined) return;
+  const increaseGasPriorityFee = async (fee: bigint) => {
+    setSpeedUp(true);
     try {
-      writeContract({
-        address: `0x${contractAddress.slice(2)}`,
-        abi: ERC20,
-        functionName: "transfer",
-        args: [`0x${userAddress.slice(2)}`, amount],
-        nonce: nonce,
-        maxFeePerGas: gasFee,
-        maxPriorityFeePerGas: fee,
-      });
-    } catch {}
+      const transaction = await fetchTransaction({ hash: `0x${tx.slice(2)}` });
+      console.log(transaction.nonce);
+
+      try {
+        writeContract({
+          address: `0x${contractAddress.slice(2)}`,
+          abi: ERC20,
+          functionName: "transfer",
+          args: [`0x${userAddress.slice(2)}`, amount],
+          nonce: transaction.nonce,
+          maxFeePerGas: gasFee,
+          maxPriorityFeePerGas: fee,
+        });
+      } catch {
+        setSpeedUp(false);
+      }
+    } catch {
+      setSpeedUp(false);
+    }
+    setSpeedUp(false);
   };
 
   useEffect(() => {
@@ -142,8 +153,8 @@ const useTransfer = ({
 
   return {
     loading,
+    speedUp,
     estimatedGas,
-    nonce: dataForPrepare?.request?.nonce,
     estimatedTime,
     status,
     statusCode,
