@@ -1,131 +1,31 @@
 import React, { useEffect, useReducer } from "react";
-import { useToken, useBalance, useAccount } from "wagmi";
-import { Spinner, ButtonWithLoader } from "@/components";
+import { useToken, useBalance, useAccount, useFeeData } from "wagmi";
+import { Spinner, ButtonWithLoader, Slider } from "@/components";
 import { useTransfer } from "@/hooks";
 
+import {
+  Actions,
+  reducer,
+  defaultState,
+  validateAddress,
+  validateNumber,
+  classNames,
+} from "@/utils";
+
 import { Open_Sans } from "next/font/google";
-import "@rainbow-me/rainbowkit/styles.css";
+import { loadFromStorage } from "@/utils/Reducer";
 
 const opensans = Open_Sans({
   weight: "400",
   subsets: ["latin"],
 });
 
-function classNames(...classes: string[]) {
-  return classes.filter(Boolean).join(" ");
-}
-
-enum Actions {
-  CA_UPDATE = "CA_UPDATE",
-  EOA_UPDATE = "EOA_UPDATE",
-  AMOUNT_UPDATE = "AMOUNT_UPDATE",
-}
-
-type Action = {
-  type: Actions;
-  payload: any;
-};
-
-type State = {
-  token: {
-    address: string;
-    name: string;
-    symbol: string;
-    decimal: number;
-    valid: boolean;
-    loading: boolean;
-    error: string;
-  };
-  user: {
-    address: string;
-    holdings: bigint;
-    formatted: string;
-    valid: boolean;
-    loading: boolean;
-    error: string;
-  };
-  transferAmount: {
-    amount: number;
-    valid: boolean;
-    error: string;
-  };
-};
-
-const defaultState: State = {
-  token: {
-    address: "",
-    name: "-",
-    symbol: "-",
-    decimal: 0,
-    valid: true,
-    loading: false,
-    error: "",
-  },
-  user: {
-    address: "",
-    holdings: BigInt(0),
-    formatted: "0",
-    valid: true,
-    loading: false,
-    error: "",
-  },
-  transferAmount: {
-    amount: 0,
-    valid: true,
-    error: "",
-  },
-};
-
-const reducer = (state: State, action: Action) => {
-  const { type, payload } = action;
-  switch (type) {
-    case Actions.CA_UPDATE:
-      return {
-        ...state,
-        token: payload,
-      };
-    case Actions.EOA_UPDATE:
-      return {
-        ...state,
-        user: payload,
-      };
-    case Actions.AMOUNT_UPDATE:
-      return {
-        ...state,
-        transferAmount: payload,
-      };
-    default:
-      return state;
-  }
-};
-
-const validateAddress = (
-  address: string
-): { valid: boolean; error: string } => {
-  if (address === null || address === undefined || address.length == 0)
-    return { valid: false, error: "Address field is empty" };
-  if (!address.startsWith("0x"))
-    return { valid: false, error: "Address must starts with '0x'" };
-  if (address.length != 42)
-    return {
-      valid: false,
-      error: "Address length should be 42 characters long",
-    };
-  return { valid: true, error: "" };
-};
-
-const validateNumber = (amount: number): { valid: boolean; error: string } => {
-  if (amount === null || amount === undefined || amount == 0)
-    return { valid: false, error: "Amount should be greater than 0" };
-  return { valid: true, error: "" };
-};
-
 export default function Start() {
   const [state, dispatch] = useReducer(reducer, defaultState);
   const { address } = useAccount();
   const { data, isError, isLoading } = useToken({
     address: validateAddress(state.token.address).valid
-      ? state.token.address
+      ? `0x${state.token.address.slice(2)}`
       : "0x",
   });
   const {
@@ -135,15 +35,30 @@ export default function Start() {
   } = useBalance({
     address: address,
     token: validateAddress(state.token.address).valid
-      ? state.token.address
+      ? `0x${state.token.address.slice(2)}`
       : "0x",
   });
-  const { loading, dataForTransfer, writeForTransfer } = useTransfer({
+  const {
+    loading,
+    estimatedTime,
+    status,
+    statusCode,
+    dataForTransfer,
+    writeForTransfer,
+    increaseGasPriorityFee,
+  } = useTransfer({
     contractAddress: state.token.address,
     userAddress: state.user.address,
     amount: BigInt(
       state.transferAmount.amount * Math.pow(10, state.token.decimal)
     ),
+    gasFee: BigInt(state.gasFee.amount),
+    priorityFee: BigInt(state.gasFee.amount - state.gasFee.baseFee),
+  });
+  const { data: dataForGas } = useFeeData({
+    watch: true,
+    formatUnits: "gwei",
+    scopeKey: `useFeeData`,
   });
 
   const onClickHandler = async (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -153,6 +68,11 @@ export default function Start() {
     switch (e.currentTarget.name) {
       case "start":
         writeForTransfer?.();
+        return;
+      case "setgas":
+        increaseGasPriorityFee(
+          BigInt(state.gasFee.amount - state.gasFee.baseFee)
+        );
         return;
     }
   };
@@ -200,9 +120,29 @@ export default function Start() {
             error: error,
           },
         });
+        break;
+      }
+      case "gas": {
+        dispatch({
+          type: Actions.GAS_UPDATE,
+          payload: {
+            ...state.gasFee,
+            amount: e.currentTarget.value,
+          },
+        });
+        break;
       }
     }
   };
+
+  useEffect(() => {
+    const state = loadFromStorage();
+    console.log(state);
+    dispatch({
+      type: Actions.RESET,
+      payload: state,
+    });
+  }, []);
 
   useEffect(() => {
     if (validateAddress(state.token.address).valid == false) return;
@@ -235,7 +175,7 @@ export default function Start() {
         name: data?.name,
         symbol: data?.symbol,
         decimal: data?.decimals,
-        holdings: 0,
+        holdings: "0",
         formatted: "0",
         loading: false,
         valid: true,
@@ -254,7 +194,7 @@ export default function Start() {
         payload: {
           ...state.user,
           loading: false,
-          holdings: 0,
+          holdings: "0",
           formatted: "0",
         },
       });
@@ -271,11 +211,44 @@ export default function Start() {
       payload: {
         ...state.user,
         loading: false,
-        holdings: dataForBalance?.value,
+        holdings: dataForBalance?.value.toString(),
         formatted: dataForBalance?.formatted,
       },
     });
   }, [dataForBalance, isErrorForBalance, isLoadingForBalance]);
+
+  useEffect(() => {
+    if (dataForTransfer === undefined) return;
+
+    dispatch({
+      type: Actions.TX_UPDATE,
+      payload: {
+        txHash: dataForTransfer.hash,
+      },
+    });
+
+    console.log(state);
+  }, [dataForTransfer]);
+
+  useEffect(() => {
+    if (dataForGas === undefined) return;
+    let amount = state.gasFee.amount;
+    let baseFee = Number(dataForGas?.gasPrice);
+    let maxFeePerGas = Number(dataForGas?.maxFeePerGas);
+    let maxPriorityPerGas = Number(dataForGas?.maxPriorityFeePerGas);
+    if (amount < baseFee) amount = baseFee;
+    if (amount > maxFeePerGas) amount = maxFeePerGas;
+
+    dispatch({
+      type: Actions.GAS_UPDATE,
+      payload: {
+        amount: amount,
+        baseFee: baseFee,
+        maxFeePerGas: maxFeePerGas,
+        maxPriorityPerGas: maxPriorityPerGas,
+      },
+    });
+  }, [dataForGas]);
 
   return (
     <div className={opensans.className}>
@@ -396,6 +369,53 @@ export default function Start() {
             ) : (
               <></>
             )}
+            <div className="w-full mt-4">
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                Gas Fee (BaseFee + Priority Fee)
+                <span className="text-[11px] text-gray-500 dark:text-gray-400 float-right">
+                  {`${(state.gasFee.amount / 1e8).toFixed(2)} gwei`}
+                </span>
+              </p>
+            </div>
+            <div className="w-full mt-2">
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                Status
+                <span
+                  className={classNames(
+                    `text-[11px] text-gray-500 dark:text-gray-400 float-right`,
+                    statusCode == 1
+                      ? `text-skyblue dark:text-skyblue`
+                      : statusCode == 2
+                      ? `text-lightblue dark:text-lightblue`
+                      : statusCode == 3
+                      ? `text-red dark:text-red`
+                      : statusCode == 4
+                      ? `text-orange dark:text-orange`
+                      : statusCode == -1
+                      ? `text-green dark:text-green`
+                      : ""
+                  )}
+                >
+                  {`${status}${
+                    statusCode == 2
+                      ? ` (Likely in < ${estimatedTime + 1} seconds)`
+                      : ""
+                  }`}
+                </span>
+              </p>
+            </div>
+            <div className="mt-1 w-full">
+              <input
+                id="default-range"
+                type="range"
+                name="gas"
+                min={state.gasFee.baseFee}
+                max={state.gasFee.maxFeePerGas}
+                value={state.gasFee.amount}
+                onChange={onChangeHandler}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-dark"
+              ></input>
+            </div>
           </>
         ) : (
           <></>
@@ -420,13 +440,30 @@ export default function Start() {
             }
           />
         </div>
+
+        {/* Increase gas fee */}
+        {statusCode == 2 ? (
+          <div className="mt-4 w-full">
+            <ButtonWithLoader
+              title={"Update Gas Fee"}
+              onClick={onClickHandler}
+              className="w-full m-auto text-white bg-gradient-to-r from-purple-400 via-purple-500 to-purple-600 focus:ring-4 focus:outline-none focus:ring-purple-300 dark:focus:ring-purple-800 shadow-lg shadow-cyan-500/50 dark:shadow-lg dark:shadow-purple-800/80 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+              name="setgas"
+            />
+          </div>
+        ) : (
+          <></>
+        )}
+
+        {/* Slider */}
         <p
           id="helper-text-explanation"
           className="mt-4 text-[10px] text-gray-500 dark:text-gray-400"
         >
-          Please remember PIN, for more information refer{" "}
+          Please note that low gas fee would lead Tx failure. For more
+          information, see the{" "}
           <a
-            href="https://docs.google.com/document/d/1rKFwrf8Qk1VStsqYBThcNDibDwT8_A1sXfu8YjfWL6M/edit#heading=h.8ruj1lh0x1vp"
+            href="#"
             className="font-medium text-blue-600 hover:underline dark:text-blue-500"
           >
             docs

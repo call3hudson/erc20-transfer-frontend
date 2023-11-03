@@ -1,8 +1,5 @@
 import { Spinner } from "@/components";
-
-function classNames(...classes: string[]) {
-  return classes.filter(Boolean).join(" ");
-}
+import { classNames } from "@/utils";
 
 type Props = {
   title?: string;
@@ -25,7 +22,9 @@ export default function ButtonWithLoader({
     <button
       type="button"
       className={classNames(
-        disabled == true ? "opacity-40" : "opacity-90 hover:opacity-100",
+        disabled == true || loading == true
+          ? "opacity-40"
+          : "opacity-90 hover:opacity-100",
         className ? className : ""
       )}
       onClick={onClick}
