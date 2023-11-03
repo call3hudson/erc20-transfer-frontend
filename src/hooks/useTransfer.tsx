@@ -5,12 +5,11 @@ import {
   useContractWrite,
   useWaitForTransaction,
   useWatchPendingTransactions,
+  usePublicClient,
+  useAccount,
 } from "wagmi";
-import {
-  writeContract,
-  fetchTransaction,
-  PrepareWriteContractResult,
-} from "wagmi/actions";
+import { writeContract, fetchTransaction } from "wagmi/actions";
+import { validateAddress } from "@/utils";
 
 import { ERC20 } from "@/abis";
 
@@ -20,9 +19,8 @@ type Props = {
   amount: bigint;
   gasFee: bigint;
   priorityFee: bigint;
+  tx: string;
 };
-
-type EIP1559 = "eip1559";
 
 const useTransfer = ({
   contractAddress,
@@ -30,51 +28,75 @@ const useTransfer = ({
   amount,
   gasFee,
   priorityFee,
+  tx,
 }: Props) => {
-  const { config: configForTransfer } = usePrepareContractWrite({
-    address: `0x${contractAddress.slice(2)}`,
-    abi: ERC20,
-    functionName: "transfer",
-    args: [`0x${userAddress.slice(2)}`, amount],
-    scopeKey: `useTransfer`,
-    maxFeePerGas: gasFee,
-    maxPriorityFeePerGas: priorityFee,
-  });
+  const publicClient = usePublicClient();
+  const { address } = useAccount();
+
+  const { config: configForTransfer, data: dataForPrepare } =
+    usePrepareContractWrite({
+      address: `0x${contractAddress.slice(2)}`,
+      abi: ERC20,
+      functionName: "transfer",
+      args: [`0x${userAddress.slice(2)}`, amount],
+      scopeKey: `useTransfer`,
+      maxFeePerGas: gasFee,
+      maxPriorityFeePerGas: priorityFee,
+    });
 
   const {
     data: dataForTransfer,
     write: writeForTransfer,
     isLoading: loadingForWrite,
     error: errorForWrite,
-  } = useContractWrite({
-    ...configForTransfer,
-    // request: {
-    //   ...configForTransfer.request,
-    //   maxFeePerGas: gasFee,
-    // },
-  });
+  } = useContractWrite(configForTransfer);
 
+  const [estimatedGas, setEstimatedGas] = useState(0);
   const [estimatedTime, setEstimatedTime] = useState(0);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState("-");
   const [statusCode, setStatusCode] = useState(0);
 
-  const increaseGasPriorityFee = (fee: bigint) => {
-    const eip1559: EIP1559 = "eip1559";
-    const { gasPrice: _, ...configRequest } = {
-      ...configForTransfer.request,
-      maxPriorityFeePerGas: fee,
-      type: eip1559,
-    };
-    writeContract({
-      ...configForTransfer,
-      request: configRequest,
-    });
+  const increaseGasPriorityFee = (fee: bigint, nonce: number | undefined) => {
+    if (nonce === undefined) return;
+    try {
+      writeContract({
+        address: `0x${contractAddress.slice(2)}`,
+        abi: ERC20,
+        functionName: "transfer",
+        args: [`0x${userAddress.slice(2)}`, amount],
+        nonce: nonce,
+        maxFeePerGas: gasFee,
+        maxPriorityFeePerGas: fee,
+      });
+    } catch {}
   };
+
+  useEffect(() => {
+    const fetch = async () => {
+      if (
+        address === undefined ||
+        !validateAddress(contractAddress).valid ||
+        !validateAddress(userAddress).valid
+      )
+        return;
+      const request = await publicClient.estimateContractGas({
+        address: `0x${contractAddress.slice(2)}`,
+        abi: ERC20,
+        functionName: "transfer",
+        args: [`0x${userAddress.slice(2)}`, amount],
+        account: address,
+      });
+
+      setEstimatedGas(Number(request));
+    };
+
+    fetch();
+  }, [contractAddress, userAddress, amount, address]);
 
   const { isLoading: loadingForTransfer, error: errorForWaiting } =
     useWaitForTransaction({
-      hash: dataForTransfer?.hash,
+      hash: tx !== "" ? `0x${tx.slice(2)}` : dataForTransfer?.hash,
     });
 
   useWatchPendingTransactions({
@@ -92,7 +114,7 @@ const useTransfer = ({
         const transaction = await fetchTransaction({ hash: hashes[index] });
         if (transaction.maxPriorityFeePerGas ?? 0 > currentGasFee) surpassing++;
       }
-      setEstimatedTime(12 * Math.ceil(surpassing / 380));
+      setEstimatedTime(12 * Math.floor(surpassing / 380));
     },
   });
 
@@ -120,6 +142,8 @@ const useTransfer = ({
 
   return {
     loading,
+    estimatedGas,
+    nonce: dataForPrepare?.request?.nonce,
     estimatedTime,
     status,
     statusCode,

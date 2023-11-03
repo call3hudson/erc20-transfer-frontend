@@ -43,6 +43,12 @@ type State = {
   };
   tx: {
     txHash: string;
+    status: string;
+    nonce: number;
+    statusCode: number;
+    estimatedGas: number;
+    estimatedTime: number;
+    loading: boolean;
   };
 };
 
@@ -77,6 +83,12 @@ const defaultState: State = {
   },
   tx: {
     txHash: "",
+    status: "",
+    nonce: 0,
+    statusCode: 0,
+    estimatedGas: 0,
+    estimatedTime: 0,
+    loading: false,
   },
 };
 
@@ -95,8 +107,10 @@ const load = () => {
 const store = (state: State) => {
   try {
     const serializedState = JSON.stringify(state);
-    if (localStorage.getItem("state") != serializedState)
+    if (localStorage.getItem("state") != serializedState) {
+      window.dispatchEvent(new Event("storage"));
       localStorage.setItem("state", serializedState);
+    }
   } catch (e) {}
 };
 
@@ -105,6 +119,9 @@ const reducer = (state: State, action: Action) => {
   let updatedState: State = state;
 
   switch (type) {
+    case Actions.RESET:
+      updatedState = loadFromStorage();
+      break;
     case Actions.CA_UPDATE:
       updatedState = {
         ...state,
@@ -134,11 +151,6 @@ const reducer = (state: State, action: Action) => {
         ...state,
         tx: payload,
       };
-      break;
-    case Actions.RESET:
-      console.log("reset");
-      console.log(payload);
-      updatedState = payload;
       break;
     default:
       updatedState = state;

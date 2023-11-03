@@ -1,6 +1,12 @@
-import React, { useEffect, useReducer } from "react";
-import { useToken, useBalance, useAccount, useFeeData } from "wagmi";
-import { Spinner, ButtonWithLoader, Slider } from "@/components";
+import React, { useEffect, useReducer, useState } from "react";
+import {
+  useToken,
+  useBalance,
+  useAccount,
+  useFeeData,
+  useNetwork,
+} from "wagmi";
+import { Spinner, ButtonWithLoader } from "@/components";
 import { useTransfer } from "@/hooks";
 
 import {
@@ -13,7 +19,6 @@ import {
 } from "@/utils";
 
 import { Open_Sans } from "next/font/google";
-import { loadFromStorage } from "@/utils/Reducer";
 
 const opensans = Open_Sans({
   weight: "400",
@@ -21,8 +26,34 @@ const opensans = Open_Sans({
 });
 
 export default function Start() {
+  const [readOnly, setReadOnly] = useState(true);
+  const [isConnected, setIsConnected] = useState(false);
+  const { address, isConnected: _isConnected } = useAccount();
+
+  const [chain, setChain] = useState<
+    (any & { unsupported?: boolean | undefined }) | undefined
+  >(undefined);
+  const { chain: _chain } = useNetwork();
+
+  useEffect(() => {
+    setIsConnected(_isConnected);
+  }, [_isConnected]);
+
+  useEffect(() => {
+    setChain(_chain);
+  }, [_chain]);
+
+  useEffect(() => {
+    setReadOnly(
+      !isConnected ||
+        chain === undefined ||
+        chain.unsupported == true ||
+        chain.id != Number(process.env.NEXT_PUBLIC_CHAIN_ID)
+    );
+  }, [isConnected, chain]);
+
   const [state, dispatch] = useReducer(reducer, defaultState);
-  const { address } = useAccount();
+
   const { data, isError, isLoading } = useToken({
     address: validateAddress(state.token.address).valid
       ? `0x${state.token.address.slice(2)}`
@@ -40,6 +71,8 @@ export default function Start() {
   });
   const {
     loading,
+    estimatedGas,
+    nonce,
     estimatedTime,
     status,
     statusCode,
@@ -54,12 +87,27 @@ export default function Start() {
     ),
     gasFee: BigInt(state.gasFee.amount),
     priorityFee: BigInt(state.gasFee.amount - state.gasFee.baseFee),
+    tx: state.tx.txHash,
   });
   const { data: dataForGas } = useFeeData({
     watch: true,
     formatUnits: "gwei",
     scopeKey: `useFeeData`,
   });
+
+  useEffect(() => {
+    dispatch({
+      type: Actions.RESET,
+      payload: {},
+    });
+
+    window.addEventListener("storage", (e) => {
+      dispatch({
+        type: Actions.RESET,
+        payload: {},
+      });
+    });
+  }, []);
 
   const onClickHandler = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.preventDefault();
@@ -71,7 +119,8 @@ export default function Start() {
         return;
       case "setgas":
         increaseGasPriorityFee(
-          BigInt(state.gasFee.amount - state.gasFee.baseFee)
+          BigInt(state.gasFee.amount - state.gasFee.baseFee),
+          nonce
         );
         return;
     }
@@ -127,7 +176,7 @@ export default function Start() {
           type: Actions.GAS_UPDATE,
           payload: {
             ...state.gasFee,
-            amount: e.currentTarget.value,
+            amount: Number(e.currentTarget.value),
           },
         });
         break;
@@ -136,16 +185,18 @@ export default function Start() {
   };
 
   useEffect(() => {
-    const state = loadFromStorage();
-    console.log(state);
-    dispatch({
-      type: Actions.RESET,
-      payload: state,
-    });
-  }, []);
-
-  useEffect(() => {
     if (validateAddress(state.token.address).valid == false) return;
+    if (readOnly) {
+      return dispatch({
+        type: Actions.CA_UPDATE,
+        payload: {
+          ...state.token,
+          valid: false,
+          loading: false,
+          error: "Please connect wallet first",
+        },
+      });
+    }
     if (isError) {
       return dispatch({
         type: Actions.CA_UPDATE,
@@ -182,13 +233,12 @@ export default function Start() {
         error: "",
       },
     });
-  }, [data, isError, isLoading]);
+  }, [data, isError, isLoading, readOnly]);
 
   useEffect(() => {
-    if (
-      validateAddress(state.token.address).valid == false ||
-      isErrorForBalance
-    )
+    if (validateAddress(state.token.address).valid == false) return;
+
+    if (isErrorForBalance)
       return dispatch({
         type: Actions.EOA_UPDATE,
         payload: {
@@ -196,6 +246,7 @@ export default function Start() {
           loading: false,
           holdings: "0",
           formatted: "0",
+          valid: false,
         },
       });
     if (isLoadingForBalance)
@@ -218,19 +269,36 @@ export default function Start() {
   }, [dataForBalance, isErrorForBalance, isLoadingForBalance]);
 
   useEffect(() => {
+    if (validateAddress(state.token.address).valid == false) return;
     if (dataForTransfer === undefined) return;
 
     dispatch({
       type: Actions.TX_UPDATE,
       payload: {
+        ...state.tx,
         txHash: dataForTransfer.hash,
       },
     });
-
-    console.log(state);
   }, [dataForTransfer]);
 
   useEffect(() => {
+    if (validateAddress(state.token.address).valid == false) return;
+
+    dispatch({
+      type: Actions.TX_UPDATE,
+      payload: {
+        ...state.tx,
+        status: status,
+        statusCode: statusCode,
+        estimatedGas: estimatedGas,
+        estimatedTime: estimatedTime,
+        loading: loading,
+      },
+    });
+  }, [status, statusCode, estimatedTime, estimatedGas, loading]);
+
+  useEffect(() => {
+    if (validateAddress(state.token.address).valid == false) return;
     if (dataForGas === undefined) return;
     let amount = state.gasFee.amount;
     let baseFee = Number(dataForGas?.gasPrice);
@@ -267,6 +335,7 @@ export default function Start() {
           )}
           placeholder="Token address (ex; 0x2c...)"
           onChange={onChangeHandler}
+          readOnly={readOnly}
         />
         {!state.token.valid ? (
           <p className="mt-1 text-[11px] text-red">{state.token.error}</p>
@@ -340,6 +409,7 @@ export default function Start() {
               )}
               placeholder="User address (ex; 0x2c...)"
               onChange={onChangeHandler}
+              readOnly={readOnly}
             />
             {!state.user.valid ? (
               <p className="mt-1 text-[11px] text-red">{state.user.error}</p>
@@ -361,6 +431,7 @@ export default function Start() {
               )}
               placeholder="Transfer amount (ex; 0.5)"
               onChange={onChangeHandler}
+              readOnly={readOnly}
             />
             {!state.transferAmount.valid ? (
               <p className="mt-1 text-[11px] text-red">
@@ -371,36 +442,55 @@ export default function Start() {
             )}
             <div className="w-full mt-4">
               <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                Gas Fee (BaseFee + Priority Fee)
-                <span className="text-[11px] text-gray-500 dark:text-gray-400 float-right">
-                  {`${(state.gasFee.amount / 1e8).toFixed(2)} gwei`}
+                Status
+                <span
+                  className={classNames(
+                    `text-[11px] text-gray-500 dark:text-gray-400 float-right`,
+                    state.tx.statusCode == 1
+                      ? `text-skyblue dark:text-skyblue`
+                      : state.tx.statusCode == 2
+                      ? `text-lightblue dark:text-lightblue`
+                      : state.tx.statusCode == 3
+                      ? `text-red dark:text-red`
+                      : state.tx.statusCode == 4
+                      ? `text-orange dark:text-orange`
+                      : state.tx.statusCode == -1
+                      ? `text-green dark:text-green`
+                      : ""
+                  )}
+                >
+                  {`${state.tx.status}${
+                    state.tx.statusCode == 2
+                      ? ` (Likely in < ${state.tx.estimatedTime + 1} seconds)`
+                      : ""
+                  }`}
                 </span>
               </p>
             </div>
             <div className="w-full mt-2">
               <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                Status
-                <span
-                  className={classNames(
-                    `text-[11px] text-gray-500 dark:text-gray-400 float-right`,
-                    statusCode == 1
-                      ? `text-skyblue dark:text-skyblue`
-                      : statusCode == 2
-                      ? `text-lightblue dark:text-lightblue`
-                      : statusCode == 3
-                      ? `text-red dark:text-red`
-                      : statusCode == 4
-                      ? `text-orange dark:text-orange`
-                      : statusCode == -1
-                      ? `text-green dark:text-green`
-                      : ""
-                  )}
-                >
-                  {`${status}${
-                    statusCode == 2
-                      ? ` (Likely in < ${estimatedTime + 1} seconds)`
-                      : ""
-                  }`}
+                Gas Fee (BaseFee + Priority Fee)
+                <span className="text-[11px] text-gray-500 dark:text-gray-400 float-right">
+                  {`${(state.gasFee.amount / 1e9).toFixed(2)} gwei`}
+                </span>
+              </p>
+            </div>
+            <div className="w-full mt-2">
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                Estimated Gas
+                <span className="text-[11px] text-gray-500 dark:text-gray-400 float-right">
+                  {`${state.tx.estimatedGas}`}
+                </span>
+              </p>
+            </div>
+            <div className="w-full mt-2">
+              <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                Required ETH
+                <span className="text-[11px] text-gray-500 dark:text-gray-400 float-right">
+                  {`${(
+                    (state.tx.estimatedGas * state.gasFee.amount) /
+                    1e9
+                  ).toFixed(2)} gwei`}
                 </span>
               </p>
             </div>
@@ -416,49 +506,48 @@ export default function Start() {
                 className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-dark"
               ></input>
             </div>
+            {/* Transfer */}
+            <div className="mt-4 w-full">
+              <ButtonWithLoader
+                title={"Start"}
+                onClick={onClickHandler}
+                className="w-full m-auto text-white bg-gradient-to-r from-cyan-400 via-cyan-500 to-cyan-600 focus:ring-4 focus:outline-none focus:ring-cyan-300 dark:focus:ring-cyan-800 shadow-lg shadow-cyan-500/50 dark:shadow-lg dark:shadow-cyan-800/80 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+                name="start"
+                loading={state.tx.loading}
+                disabled={
+                  !(
+                    state.token.valid &&
+                    state.user.valid &&
+                    state.user.formatted != "0"
+                  ) ||
+                  state.transferAmount.amount == 0 ||
+                  readOnly ||
+                  !writeForTransfer
+                }
+              />
+            </div>
+            {/* Increase gas fee */}
+            {state.tx.statusCode == 2 ? (
+              <div className="mt-4 w-full">
+                <ButtonWithLoader
+                  title={"Speed up"}
+                  onClick={onClickHandler}
+                  className="w-full m-auto text-white bg-gradient-to-r from-purple-400 via-purple-500 to-purple-600 focus:ring-4 focus:outline-none focus:ring-purple-300 dark:focus:ring-purple-800 shadow-lg shadow-cyan-500/50 dark:shadow-lg dark:shadow-purple-800/80 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
+                  name="setgas"
+                  disabled={readOnly}
+                />
+              </div>
+            ) : (
+              <></>
+            )}
           </>
         ) : (
           <></>
         )}
 
-        {/* Transfer */}
-        <div className="mt-4 w-full">
-          <ButtonWithLoader
-            title={"Start"}
-            onClick={onClickHandler}
-            className="w-full m-auto text-white bg-gradient-to-r from-cyan-400 via-cyan-500 to-cyan-600 focus:ring-4 focus:outline-none focus:ring-cyan-300 dark:focus:ring-cyan-800 shadow-lg shadow-cyan-500/50 dark:shadow-lg dark:shadow-cyan-800/80 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
-            name="start"
-            loading={loading}
-            disabled={
-              !(
-                state.token.valid &&
-                state.user.valid &&
-                state.user.formatted != "0"
-              ) ||
-              state.transferAmount.amount == 0 ||
-              !writeForTransfer
-            }
-          />
-        </div>
-
-        {/* Increase gas fee */}
-        {statusCode == 2 ? (
-          <div className="mt-4 w-full">
-            <ButtonWithLoader
-              title={"Update Gas Fee"}
-              onClick={onClickHandler}
-              className="w-full m-auto text-white bg-gradient-to-r from-purple-400 via-purple-500 to-purple-600 focus:ring-4 focus:outline-none focus:ring-purple-300 dark:focus:ring-purple-800 shadow-lg shadow-cyan-500/50 dark:shadow-lg dark:shadow-purple-800/80 font-medium rounded-lg text-sm px-5 py-2.5 text-center"
-              name="setgas"
-            />
-          </div>
-        ) : (
-          <></>
-        )}
-
-        {/* Slider */}
         <p
           id="helper-text-explanation"
-          className="mt-4 text-[10px] text-gray-500 dark:text-gray-400"
+          className="mt-4 mb-5 text-[10px] text-gray-500 dark:text-gray-400"
         >
           Please note that low gas fee would lead Tx failure. For more
           information, see the{" "}
